@@ -1,0 +1,303 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Plane: Skyline Rush</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; display: grid; place-items: center;
+  background: #111a30; color: white;
+  font-family: Arial, sans-serif; padding: 16px;
+}
+main { width: min(900px, 100%); text-align: center; }
+h1 { color: #ffcf5a; }
+canvas {
+  width: 100%; height: auto; display: block;
+  border: 3px solid #7894c7; border-radius: 12px;
+}
+p { color: #d8e5ff; }
+button {
+  background: #ffcf5a; color: #17213a; border: 0;
+  border-radius: 24px; padding: 12px 25px;
+  font-weight: bold; font-size: 17px; cursor: pointer;
+}
+#gamebox { position: relative; }
+#overlay {
+  position: absolute; inset: 0; display: flex;
+  flex-direction: column; align-items: center; justify-content: center;
+  background: #101a2cbb; padding: 20px;
+}
+#overlay.hidden { display: none; }
+#overlay h2 { font-size: 32px; margin-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>✈ Paper Plane: Skyline Rush</h1>
+  <p>Fly through the city! Press SPACE or ↑ to flap. Press R to restart.</p>
+
+  <div id="gamebox">
+    <canvas id="game" width="800" height="480"></canvas>
+    <div id="overlay">
+      <h2 id="message">Ready for takeoff?</h2>
+      <p id="instructions">Avoid buildings and score by passing them.</p>
+      <button id="start">Start Flight</button>
+    </div>
+  </div>
+  <p>Pass each building pair to score 1 point. Don't hit a building or the ground!</p>
+</main>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const overlay = document.getElementById("overlay");
+const message = document.getElementById("message");
+const instructions = document.getElementById("instructions");
+const startButton = document.getElementById("start");
+
+const W = canvas.width;
+const H = canvas.height;
+const ground = 35;
+
+let plane, buildings, score, best = 0;
+let running = false;
+let frame = 0;
+let lastTime = 0;
+let animationId = null;
+
+try {
+  best = Number(localStorage.getItem("skylineBest") || 0);
+} catch (e) {}
+
+function resetGame() {
+  if (animationId !== null) cancelAnimationFrame(animationId);
+
+  plane = { x: 160, y: 220, velocity: 0 };
+  buildings = [];
+  score = 0;
+  frame = 0;
+  running = true;
+  overlay.classList.add("hidden");
+  lastTime = performance.now();
+  animationId = requestAnimationFrame(loop);
+}
+
+function flap() {
+  if (running) plane.velocity = -360;
+}
+
+function endGame() {
+  if (!running) return;
+  running = false;
+
+  if (score > best) {
+    best = score;
+    try {
+      localStorage.setItem("skylineBest", String(best));
+    } catch (e) {}
+  }
+
+  message.textContent = "Flight over!";
+  instructions.textContent =
+    "Score: " + score + " | Best: " + best + ". Ready to try again?";
+  startButton.textContent = "Fly Again";
+  overlay.classList.remove("hidden");
+}
+
+function addBuilding() {
+  const gap = 155;
+  const topHeight = 45 + Math.random() * 185;
+
+  buildings.push({
+    x: W + 10,
+    width: 72,
+    top: topHeight,
+    gap: gap,
+    scored: false
+  });
+}
+
+function circleHitsRect(cx, cy, radius, x, y, w, h) {
+  const nearestX = Math.max(x, Math.min(cx, x + w));
+  const nearestY = Math.max(y, Math.min(cy, y + h));
+  const dx = cx - nearestX;
+  const dy = cy - nearestY;
+  return dx * dx + dy * dy < radius * radius;
+}
+
+function drawBackground() {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#71c9ef");
+  sky.addColorStop(1, "#e7f6ff");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sun
+  ctx.fillStyle = "#ffe59b";
+  ctx.beginPath();
+  ctx.arc(680, 75, 35, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Distant city
+  for (let i = 0; i < 12; i++) {
+    const x = i * 75 - (frame * 0.4 % 75);
+    const height = 70 + (i * 37 % 100);
+    ctx.fillStyle = "#9db9d4";
+    ctx.fillRect(x, H - ground - height, 60, height);
+
+    ctx.fillStyle = "#dceafa";
+    for (let wx = x + 10; wx < x + 52; wx += 18) {
+      for (let wy = H - ground - height + 12;
+           wy < H - ground - 8; wy += 23) {
+        ctx.fillRect(wx, wy, 6, 9);
+      }
+    }
+  }
+
+  // Ground
+  ctx.fillStyle = "#31594b";
+  ctx.fillRect(0, H - ground, W, ground);
+  ctx.fillStyle = "#70b777";
+  ctx.fillRect(0, H - ground, W, 7);
+}
+
+function drawBuildings() {
+  for (const b of buildings) {
+    const bottomY = b.top + b.gap;
+
+    ctx.fillStyle = "#536a9b";
+    ctx.fillRect(b.x, 0, b.width, b.top);
+    ctx.fillRect(b.x, bottomY, b.width, H - ground - bottomY);
+
+    ctx.fillStyle = "#34486f";
+    ctx.fillRect(b.x - 4, b.top - 9, b.width + 8, 12);
+    ctx.fillRect(b.x - 4, bottomY, b.width + 8, 12);
+
+    ctx.fillStyle = "#ffdb8a";
+    for (let wx = b.x + 12; wx < b.x + b.width - 5; wx += 19) {
+      for (let wy = 15; wy < b.top - 10; wy += 25) {
+        ctx.fillRect(wx, wy, 7, 10);
+      }
+      for (let wy = bottomY + 20; wy < H - ground - 8; wy += 25) {
+        ctx.fillRect(wx, wy, 7, 10);
+      }
+    }
+  }
+}
+
+function drawPlane() {
+  ctx.save();
+  ctx.translate(plane.x, plane.y);
+  ctx.rotate(Math.max(-0.4, Math.min(0.7, plane.velocity / 600)));
+
+  // Paper plane
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(-23, -14);
+  ctx.lineTo(30, 0);
+  ctx.lineTo(-22, 16);
+  ctx.lineTo(-8, 2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#a8cce8";
+  ctx.beginPath();
+  ctx.moveTo(-8, 2);
+  ctx.lineTo(30, 0);
+  ctx.lineTo(-2, 8);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawScore() {
+  ctx.fillStyle = "#182b4b";
+  ctx.fillRect(W - 135, 15, 115, 45);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 19px Arial";
+  ctx.fillText("SCORE: " + score, W - 125, 44);
+}
+
+function draw() {
+  drawBackground();
+  drawBuildings();
+  drawPlane();
+  drawScore();
+}
+
+function loop(now) {
+  if (!running) return;
+
+  const dt = Math.min((now - lastTime) / 1000, 0.035);
+  lastTime = now;
+  frame += dt * 60;
+
+  // Gravity pulls the plane down.
+  plane.velocity += 950 * dt;
+  plane.y += plane.velocity * dt;
+
+  // Create a new building pair every 1.7 seconds or so.
+  if (frame >= 100) {
+    addBuilding();
+    frame = 0;
+  }
+
+  for (const b of buildings) {
+    b.x -= 205 * dt;
+
+    if (!b.scored && b.x + b.width < plane.x) {
+      b.scored = true;
+      score++;
+    }
+
+    const radius = 13;
+    const bottomY = b.top + b.gap;
+
+    if (
+      circleHitsRect(plane.x, plane.y, radius,
+                     b.x, 0, b.width, b.top) ||
+      circleHitsRect(plane.x, plane.y, radius,
+                     b.x, bottomY, b.width, H - ground - bottomY)
+    ) {
+      endGame();
+    }
+  }
+
+  buildings = buildings.filter(b => b.x + b.width > 0);
+
+  if (plane.y < 0 || plane.y > H - ground) {
+    endGame();
+  }
+
+  draw();
+  if (running) animationId = requestAnimationFrame(loop);
+}
+
+startButton.addEventListener("click", resetGame);
+
+window.addEventListener("keydown", function(event) {
+  if (event.code === "Space" || event.code === "ArrowUp") {
+    event.preventDefault();
+    if (!running) resetGame();
+    flap();
+  }
+
+  if (event.code === "KeyR") resetGame();
+});
+
+canvas.addEventListener("pointerdown", function() {
+  flap();
+});
+
+// Draw the opening screen.
+plane = { x: 160, y: 220, velocity: 0 };
+buildings = [];
+score = 0;
+draw();
+</script>
+</body>
+</html>
